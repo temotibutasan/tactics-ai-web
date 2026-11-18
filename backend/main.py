@@ -1,12 +1,15 @@
-from dotenv import load_dotenv
-load_dotenv() # .env ファイルから環境変数を読み込む
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import shutil
 import os
 import random
+from pathlib import Path
+from dotenv import load_dotenv
 from google import genai
+
+# .env ファイルから環境変数を確実に読み込む
+load_dotenv(Path(__file__).resolve().with_name(".env"))
 
 app = FastAPI(title="TacticsAI Backend", version="1.0.0")
 
@@ -21,13 +24,16 @@ app.add_middleware(
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Geminiクライアントの初期化（環境変数から設定）
-# ※本番では環境変数 (GEMINI_API_KEY) に設定することを推奨します
+# 環境変数から Gemini API キーを取得
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    print("警告: GEMINI_API_KEY 環境変数が設定されていません。")
 
-client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+if not GEMINI_API_KEY:
+    print("⚠️ 警告: GEMINI_API_KEY が設定されていません。.envファイルを確認してください。")
+    client = None
+else:
+    # 新しい Google GenAI SDK の初期化
+    client = genai.Client(api_key=GEMINI_API_KEY)
+
 class TacticsRequest(BaseModel):
     tracking_summary: str
 
@@ -67,12 +73,12 @@ async def track_video(file: UploadFile = File(...)):
 
 @app.post("/api/analyze-tactics")
 async def analyze_tactics(data: TacticsRequest):
-    """
-    トラッキングデータをもとに、Gemini AIに戦術分析を行わせる
-    """
     if not client:
-        raise HTTPException(status_code=500, detail="Gemini APIキーが設定されていません。")
-
+        raise HTTPException(
+            status_code=500, 
+            detail="Gemini APIキーが設定されていません。backend/.env ファイルに GEMINI_API_KEY=your_key を記述してください。"
+        )
+    
     prompt = f"""
     あなたはプロサッカーの戦術アナリストです。以下の選手のトラッキング・フォーメーション状況を分析し、
     1. チームのコンパクト性（陣形の崩れや隙）
@@ -86,9 +92,10 @@ async def analyze_tactics(data: TacticsRequest):
 
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.8-flash',
             contents=prompt,
         )
         return {"status": "success", "analysis": response.text}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Gemini API エラー発生: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Gemini API処理エラー: {str(e)}")
